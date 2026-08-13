@@ -264,7 +264,20 @@ export default function App() {
   // --- STATES ---
   const [students, setStudents] = useState<Student[]>(() => {
     const saved = localStorage.getItem('visitsync_students');
-    return saved ? JSON.parse(saved) : DEFAULT_STUDENTS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Clear out old mock demo data so we always rely 100% on fresh Google Sheet database
+        if (Array.isArray(parsed) && parsed.some(s => s.id === 'STD-2569-001' || s.name === 'นายสิทธิชัย สุขใจ')) {
+          localStorage.removeItem('visitsync_students');
+          return [];
+        }
+        return parsed;
+      } catch {
+        return [];
+      }
+    }
+    return [];
   });
 
   const [users, setUsers] = useState<AppUser[]>(() => {
@@ -487,43 +500,47 @@ export default function App() {
         return headers.findIndex(h => keywords.some(k => h.includes(k)));
       };
 
-      const idIdx = findIndex(['รหัส', 'id', 'เลขประจำตัว']);
-      const nameIdx = findIndex(['ชื่อ-นามสกุล', 'ชื่อ นามสกุล', 'ชื่อจริง', 'ชื่อ', 'name', 'fullname']);
+      const idIdx = findIndex(['รหัส', 'id', 'เลขประจำตัว', 'code']);
+      const nameIdx = findIndex(['ชื่อ-นามสกุล', 'ชื่อ นามสกุล', 'ชื่อจริง', 'ชื่อ', 'name', 'fullname', 'นักเรียน']);
       const classIdx = findIndex(['ชั้น', 'ห้อง', 'ระดับชั้น', 'class', 'grade', 'level']);
       const statusIdx = findIndex(['สถานะ', 'การเยี่ยม', 'status']);
       const studentPhoneIdx = findIndex(['เบอร์นักเรียน', 'เบอร์นักศึกษา', 'เบอร์โทรนักเรียน', 'เบอร์โทรนักศึกษา', 'เบอร์ส่วนตัว', 'student_phone', 'std_phone']);
-      const imageIdx = findIndex(['รูป', 'รูปถ่าย', 'ภาพ', 'image', 'photo', 'avatar', 'pic']);
+      const imageIdx = findIndex(['รูป', 'รูปถ่าย', 'ภาพ', 'image', 'photo', 'avatar', 'pic', 'picture']);
       const parentIdx = findIndex(['ผู้ปกครอง', 'parent']);
-      const phoneIdx = findIndex(['เบอร์ผู้ปกครอง', 'เบอร์', 'โทร', 'phone', 'mobile', 'tel']);
+      const phoneIdx = findIndex(['เบอร์ผู้ปกครอง', 'เบอร์โทรผู้ปกครอง', 'เบอร์', 'โทร', 'phone', 'mobile', 'tel']);
       const addressIdx = findIndex(['ที่อยู่', 'address']);
-      const notesIdx = findIndex(['บันทึก', 'หมายเหตุ', 'รายละเอียด', 'notes', 'comment', 'remark']);
-      const dateIdx = findIndex(['วันที่', 'date']);
-      const visitorIdx = findIndex(['ผู้ตรวจ', 'ผู้เยี่ยม', 'ครู', 'visitor', 'teacher']);
+      const notesIdx = findIndex(['บันทึก', 'หมายเหตุ', 'รายละเอียด', 'notes', 'comment', 'remark', 'ความเห็น']);
+      const dateIdx = findIndex(['วันที่', 'date', 'time', 'timestamp']);
+      const visitorIdx = findIndex(['ผู้ตรวจ', 'ผู้เยี่ยม', 'ครู', 'visitor', 'teacher', 'ที่ปรึกษา']);
       const visitorPhoneIdx = findIndex(['เบอร์ครู', 'เบอร์ผู้ตรวจ', 'เบอร์ครูที่ปรึกษา', 'visitor_phone', 'advisor_phone', 'teacher_phone']);
       const mapIdx = findIndex(['แผนที่', 'พิกัด', 'map', 'gps', 'location', 'url']);
 
-      const getVal = (row: string[], idx: number, fallback: string = '') => {
-        if (idx !== -1 && idx < row.length) {
-          return row[idx] || fallback;
+      const getValWithFallback = (row: string[], primaryIdx: number, positionalFallbackIdx: number, fallbackValue: string = '') => {
+        if (primaryIdx !== -1 && primaryIdx < row.length && row[primaryIdx] !== undefined && row[primaryIdx] !== '') {
+          return row[primaryIdx];
         }
-        return fallback;
+        if (positionalFallbackIdx < row.length && row[positionalFallbackIdx] !== undefined && row[positionalFallbackIdx] !== '') {
+          return row[positionalFallbackIdx];
+        }
+        return fallbackValue;
       };
 
       const parsedStudents: Student[] = [];
 
       for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
-        if (row.length < 2) continue;
+        if (row.length < 1) continue;
 
-        const id = idIdx !== -1 && row[idIdx] ? row[idIdx] : `STD-GS-${1000 + r}`;
-        const name = getVal(row, nameIdx, 'ไม่ระบุชื่อ');
-        // Ignore fully empty rows
-        if (name === 'ไม่ระบุชื่อ' && !row.some(c => c !== '')) continue;
+        const id = getValWithFallback(row, idIdx, 0, `STD-GS-${1000 + r}`);
+        const name = getValWithFallback(row, nameIdx, 1, '');
+        
+        // Ignore rows that don't have any name or valid data
+        if (!name && !row.some(c => c.trim() !== '')) continue;
 
-        const classYear = getVal(row, classIdx, 'ปวช.1');
+        const classYear = getValWithFallback(row, classIdx, 2, 'ปวช.1');
+        const rawStatus = getValWithFallback(row, statusIdx, 3, '').toLowerCase();
         
         let status: 'visited' | 'pending' | 'postponed' = 'pending';
-        const rawStatus = getVal(row, statusIdx, '').toLowerCase();
         if (rawStatus.includes('เสร็จ') || rawStatus.includes('visit') || rawStatus.includes('สำเร็จ') || rawStatus.includes('เรียบร้อย') || rawStatus.includes('เยี่ยมแล้ว')) {
           status = 'visited';
         } else if (rawStatus.includes('เลื่อน') || rawStatus.includes('postpone')) {
@@ -532,19 +549,19 @@ export default function App() {
 
         parsedStudents.push({
           id,
-          name,
+          name: name || `นักเรียนรายที่ ${r}`,
           classYear,
           status,
-          studentPhone: getVal(row, studentPhoneIdx, ''),
-          studentImage: getVal(row, imageIdx, ''),
-          parentName: getVal(row, parentIdx, ''),
-          parentPhone: getVal(row, phoneIdx, ''),
-          address: getVal(row, addressIdx, ''),
-          visitNotes: getVal(row, notesIdx, ''),
-          visitDate: getVal(row, dateIdx, ''),
-          visitorName: getVal(row, visitorIdx, ''),
-          visitorPhone: getVal(row, visitorPhoneIdx, ''),
-          mapUrl: getVal(row, mapIdx, '')
+          studentPhone: getValWithFallback(row, studentPhoneIdx, 4, ''),
+          studentImage: getValWithFallback(row, imageIdx, 5, ''),
+          parentName: getValWithFallback(row, parentIdx, 6, ''),
+          parentPhone: getValWithFallback(row, phoneIdx, 7, ''),
+          address: getValWithFallback(row, addressIdx, 8, ''),
+          visitNotes: getValWithFallback(row, notesIdx, 9, ''),
+          visitDate: getValWithFallback(row, dateIdx, 10, ''),
+          visitorName: getValWithFallback(row, visitorIdx, 11, ''),
+          visitorPhone: getValWithFallback(row, visitorPhoneIdx, 12, ''),
+          mapUrl: getValWithFallback(row, mapIdx, 13, '')
         });
       }
 

@@ -14,25 +14,31 @@ async function startServer() {
     try {
       const { url, appscript } = req.query;
 
-      // If user provided an Apps Script Web App URL to GET data
-      if (appscript && typeof appscript === 'string') {
-        console.log(`[Server] Fetching from Apps Script GET: ${appscript}`);
-        const response = await fetch(appscript, { redirect: 'follow' });
-        if (!response.ok) {
-          throw new Error(`Apps Script returned status ${response.status}`);
+      // 1. If user provided an Apps Script Web App URL, try fetching from Apps Script first
+      if (appscript && typeof appscript === 'string' && appscript.trim().length > 0) {
+        try {
+          console.log(`[Server] Fetching from Apps Script GET: ${appscript}`);
+          const response = await fetch(appscript.trim(), { redirect: 'follow' });
+          if (response.ok) {
+            const textOrJson = await response.text();
+            if (textOrJson && textOrJson.length > 5) {
+              res.json({ data: textOrJson, source: 'appscript' });
+              return;
+            }
+          }
+          console.warn(`[Server] Apps Script GET returned non-ok or empty response, attempting Google Sheets CSV fallback...`);
+        } catch (err) {
+          console.warn('[Server] Apps Script GET error, attempting Google Sheets CSV fallback:', err);
         }
-        const textOrJson = await response.text();
-        res.json({ data: textOrJson });
-        return;
       }
 
-      if (!url || typeof url !== 'string') {
-        res.status(400).json({ error: 'Missing or invalid url parameter' });
-        return;
-      }
+      // Default URL fallback to target sheet if url is missing or empty
+      const targetUrl = (url && typeof url === 'string' && url.trim().length > 0)
+        ? url.trim()
+        : 'https://docs.google.com/spreadsheets/d/1ZWvV2QBmnNzzrIyzUK-x6FkU6TtXhfmtRLzelzuO_NA/edit?usp=sharing';
 
       // Extract sheet ID
-      const sheetIdMatch = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      const sheetIdMatch = targetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
       if (!sheetIdMatch || !sheetIdMatch[1]) {
         res.status(400).json({ error: 'ไม่พบ ID ของ Google Sheets ในลิงก์ที่ระบุ' });
         return;
@@ -40,7 +46,7 @@ async function startServer() {
       const sheetId = sheetIdMatch[1];
 
       // Extract GID (default to 0 if not present)
-      const gidMatch = url.match(/[?&]gid=([0-9]+)/);
+      const gidMatch = targetUrl.match(/[?&]gid=([0-9]+)/);
       const gid = gidMatch ? gidMatch[1] : '0';
 
       // Primary CSV export URL
@@ -77,7 +83,7 @@ async function startServer() {
         csvText = await pubResponse.text();
       }
 
-      res.json({ csv: csvText });
+      res.json({ csv: csvText, source: 'google_sheets_csv' });
     } catch (err: any) {
       console.error('[Server] Google Sheets fetch error:', err);
       res.status(500).json({ error: err.message || 'Failed to fetch spreadsheet data' });
