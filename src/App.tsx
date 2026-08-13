@@ -389,7 +389,7 @@ export default function App() {
 
     setIsSavingToSheet(true);
     setSyncStatus('syncing');
-    setSyncMessage('กำลังส่งและบันทึกข้อมูลนักเรียนลง Google Sheets ผ่าน Apps Script...');
+    setSyncMessage('กำลังส่งและบันทึกข้อมูลนักเรียนและครูผู้เยี่ยมบ้านลง Google Sheets ผ่าน Apps Script...');
 
     try {
       const response = await fetch('/api/appscript-save', {
@@ -398,6 +398,7 @@ export default function App() {
         body: JSON.stringify({
           appScriptUrl: targetScriptUrl,
           students: listToSave,
+          teachers: users.filter(u => u.role === 'teacher'),
           action: 'sync_all'
         })
       });
@@ -418,6 +419,46 @@ export default function App() {
       return false;
     } finally {
       setIsSavingToSheet(false);
+    }
+  };
+
+  const handleRegisterTeacherToSheet = async (teacher: AppUser) => {
+    const targetScriptUrl = appScriptUrl.trim();
+    if (!targetScriptUrl) return;
+    try {
+      await fetch('/api/appscript-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appScriptUrl: targetScriptUrl,
+          action: 'register_teacher',
+          targetSheet: 'ครูผู้เยี่ยมบ้าน',
+          teacher
+        })
+      });
+      console.log('Saved teacher to Google Sheet "ครูผู้เยี่ยมบ้าน" successfully');
+    } catch (err) {
+      console.error('Failed to save teacher to Google Sheet:', err);
+    }
+  };
+
+  const handleRegisterStudentToSheet = async (student: Student) => {
+    const targetScriptUrl = appScriptUrl.trim();
+    if (!targetScriptUrl) return;
+    try {
+      await fetch('/api/appscript-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appScriptUrl: targetScriptUrl,
+          action: 'register_student',
+          targetSheet: 'นักเรียน-นักศึกษา',
+          student
+        })
+      });
+      console.log('Saved student to Google Sheet "นักเรียน-นักศึกษา" successfully');
+    } catch (err) {
+      console.error('Failed to save student to Google Sheet:', err);
     }
   };
 
@@ -445,7 +486,39 @@ export default function App() {
       if (!csvText && data.data) {
         try {
           const parsed = typeof data.data === 'string' ? JSON.parse(data.data) : data.data;
-          if (parsed.data && Array.isArray(parsed.data)) {
+          
+          // If Apps Script returned teachers array, parse teachers from 'ครูผู้เยี่ยมบ้าน' sheet
+          if (parsed.teachers && Array.isArray(parsed.teachers) && parsed.teachers.length > 1) {
+            const tRows = parsed.teachers;
+            setUsers(prev => {
+              const updated = [...prev];
+              for (let r = 1; r < tRows.length; r++) {
+                const trow = tRows[r];
+                if (trow.length >= 3 && trow[0] && trow[2]) {
+                  const uName = String(trow[0]).trim();
+                  const name = String(trow[1] || uName).trim();
+                  const pass = String(trow[2]).trim();
+                  const phone = trow[3] ? String(trow[3]).trim() : undefined;
+                  const role = trow[4] ? String(trow[4]).trim() : 'teacher';
+
+                  if (uName && !updated.some(u => u.username === uName)) {
+                    updated.push({
+                      username: uName,
+                      name: name,
+                      password: pass,
+                      role: role === 'student' ? 'student' : 'teacher',
+                      phone
+                    });
+                  }
+                }
+              }
+              return updated;
+            });
+          }
+
+          if (parsed.students && Array.isArray(parsed.students)) {
+            csvText = parsed.students.map((row: any[]) => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+          } else if (parsed.data && Array.isArray(parsed.data)) {
             csvText = parsed.data.map((row: any[]) => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
           }
         } catch {
@@ -700,6 +773,7 @@ export default function App() {
       };
 
       setStudents(prev => [newStudent, ...prev]);
+      handleRegisterStudentToSheet(newStudent);
     }
 
     const newUser: AppUser = {
@@ -712,6 +786,10 @@ export default function App() {
     };
 
     setUsers(prev => [...prev, newUser]);
+    if (regRole === 'teacher') {
+      handleRegisterTeacherToSheet(newUser);
+    }
+
     setCurrentUser(newUser);
     setSuccessToast('ลงทะเบียนและเข้าสู่ระบบสำเร็จ!');
     
@@ -2425,7 +2503,84 @@ export default function App() {
                                 </div>
                                 <button
                                   onClick={() => {
-                                    const codeText = `function doGet(e) {\n  try {\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    var data = sheet.getDataRange().getValues();\n    return ContentService\n      .createTextOutput(JSON.stringify({ status: 'success', data: data }))\n      .setMimeType(ContentService.MimeType.JSON);\n  } catch (err) {\n    return ContentService\n      .createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))\n      .setMimeType(ContentService.MimeType.JSON);\n  }\n}\n\nfunction doPost(e) {\n  try {\n    var contents = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    \n    if (contents.action === 'sync_all' && Array.isArray(contents.students)) {\n      sheet.clearContents();\n      var headers = [\n        'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'ระดับชั้น', 'สถานะการเยี่ยม',\n        'เบอร์โทรนักเรียน', 'รูปถ่ายนักเรียน', 'ชื่อผู้ปกครอง', 'เบอร์โทรผู้ปกครอง',\n        'ที่อยู่', 'บันทึกการเยี่ยมบ้าน', 'วันที่เข้าเยี่ยม', 'ครูที่ปรึกษา',\n        'เบอร์โทรครู', 'พิกัดแผนที่'\n      ];\n      sheet.appendRow(headers);\n      \n      contents.students.forEach(function(s) {\n        var statusText = 'รอดำเนินการ';\n        if (s.status === 'visited') statusText = 'เยี่ยมแล้ว';\n        else if (s.status === 'postponed') statusText = 'เลื่อนเยี่ยม';\n\n        sheet.appendRow([\n          s.id || '',\n          s.name || '',\n          s.classYear || '',\n          statusText,\n          s.studentPhone || '',\n          s.studentImage || '',\n          s.parentName || '',\n          s.parentPhone || '',\n          s.address || '',\n          s.visitNotes || '',\n          s.visitDate || '',\n          s.visitorName || '',\n          s.visitorPhone || '',\n          s.mapUrl || ''\n        ]);\n      });\n      \n      return ContentService\n        .createTextOutput(JSON.stringify({ status: 'success', count: contents.students.length }))\n        .setMimeType(ContentService.MimeType.JSON);\n    }\n    \n    return ContentService\n      .createTextOutput(JSON.stringify({ status: 'error', message: 'Action ไม่ถูกต้อง' }))\n      .setMimeType(ContentService.MimeType.JSON);\n  } catch (err) {\n    return ContentService\n      .createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))\n      .setMimeType(ContentService.MimeType.JSON);\n  }\n}`;
+                                    const codeText = `function doGet(e) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var studentSheet = ss.getSheetByName('นักเรียน-นักศึกษา') || ss.getSheets()[0];
+    var studentData = studentSheet ? studentSheet.getDataRange().getValues() : [];
+    var teacherSheet = ss.getSheetByName('ครูผู้เยี่ยมบ้าน');
+    var teacherData = teacherSheet ? teacherSheet.getDataRange().getValues() : [];
+    
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: 'success', students: studentData, teachers: teacherData, data: studentData }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doPost(e) {
+  try {
+    var contents = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // 1. บันทึกครูผู้เยี่ยมบ้าน -> หน้า 'ครูผู้เยี่ยมบ้าน'
+    if (contents.action === 'register_teacher' || contents.targetSheet === 'ครูผู้เยี่ยมบ้าน') {
+      var tSheet = ss.getSheetByName('ครูผู้เยี่ยมบ้าน');
+      if (!tSheet) {
+        tSheet = ss.insertSheet('ครูผู้เยี่ยมบ้าน');
+        tSheet.appendRow(['ชื่อผู้ใช้งาน/ไอดี', 'ชื่อ-นามสกุล', 'รหัสผ่าน', 'เบอร์โทรศัพท์', 'บทบาท', 'วันที่ลงทะเบียน']);
+      }
+      var t = contents.teacher || {};
+      tSheet.appendRow([t.username || '', t.name || '', t.password || '', t.phone || '', 'teacher', new Date().toLocaleString('th-TH')]);
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success', message: 'บันทึกครูผู้เยี่ยมบ้านเรียบร้อย' })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // 2. บันทึกนักเรียน -> หน้า 'นักเรียน-นักศึกษา'
+    if (contents.action === 'register_student' || contents.targetSheet === 'นักเรียน-นักศึกษา') {
+      var sSheet = ss.getSheetByName('นักเรียน-นักศึกษา');
+      if (!sSheet) {
+        sSheet = ss.insertSheet('นักเรียน-นักศึกษา');
+        sSheet.appendRow(['รหัสประจำตัว', 'ชื่อ-นามสกุล', 'ระดับชั้น', 'สถานะการเยี่ยม', 'เบอร์โทรนักเรียน', 'รูปถ่ายนักเรียน', 'ชื่อผู้ปกครอง', 'เบอร์โทรผู้ปกครอง', 'ที่อยู่', 'บันทึกการเยี่ยมบ้าน', 'วันที่เข้าเยี่ยม', 'ครูที่ปรึกษา', 'เบอร์โทรครู', 'พิกัดแผนที่']);
+      }
+      var s = contents.student || {};
+      var statusText = 'รอดำเนินการ';
+      if (s.status === 'visited') statusText = 'เยี่ยมแล้ว';
+      else if (s.status === 'postponed') statusText = 'เลื่อนเยี่ยม';
+      sSheet.appendRow([s.id || '', s.name || '', s.classYear || '', statusText, s.studentPhone || '', s.studentImage || '', s.parentName || '', s.parentPhone || '', s.address || '', s.visitNotes || '', s.visitDate || '', s.visitorName || '', s.visitorPhone || '', s.mapUrl || '']);
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success', message: 'บันทึกนักเรียนเรียบร้อย' })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // 3. ซิงค์ทั้งหมด (Sync All)
+    if (contents.action === 'sync_all' && Array.isArray(contents.students)) {
+      var sSheet = ss.getSheetByName('นักเรียน-นักศึกษา');
+      if (!sSheet) sSheet = ss.insertSheet('นักเรียน-นักศึกษา');
+      sSheet.clearContents();
+      sSheet.appendRow(['รหัสประจำตัว', 'ชื่อ-นามสกุล', 'ระดับชั้น', 'สถานะการเยี่ยม', 'เบอร์โทรนักเรียน', 'รูปถ่ายนักเรียน', 'ชื่อผู้ปกครอง', 'เบอร์โทรผู้ปกครอง', 'ที่อยู่', 'บันทึกการเยี่ยมบ้าน', 'วันที่เข้าเยี่ยม', 'ครูที่ปรึกษา', 'เบอร์โทรครู', 'พิกัดแผนที่']);
+      contents.students.forEach(function(s) {
+        var statusText = 'รอดำเนินการ';
+        if (s.status === 'visited') statusText = 'เยี่ยมแล้ว';
+        else if (s.status === 'postponed') statusText = 'เลื่อนเยี่ยม';
+        sSheet.appendRow([s.id || '', s.name || '', s.classYear || '', statusText, s.studentPhone || '', s.studentImage || '', s.parentName || '', s.parentPhone || '', s.address || '', s.visitNotes || '', s.visitDate || '', s.visitorName || '', s.visitorPhone || '', s.mapUrl || '']);
+      });
+      if (Array.isArray(contents.teachers)) {
+        var tSheet = ss.getSheetByName('ครูผู้เยี่ยมบ้าน');
+        if (!tSheet) tSheet = ss.insertSheet('ครูผู้เยี่ยมบ้าน');
+        tSheet.clearContents();
+        tSheet.appendRow(['ชื่อผู้ใช้งาน/ไอดี', 'ชื่อ-นามสกุล', 'รหัสผ่าน', 'เบอร์โทรศัพท์', 'บทบาท', 'วันที่ลงทะเบียน']);
+        contents.teachers.forEach(function(t) {
+          tSheet.appendRow([t.username || '', t.name || '', t.password || '', t.phone || '', t.role || 'teacher', new Date().toLocaleString('th-TH')]);
+        });
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success', count: contents.students.length })).setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: 'Action ไม่ถูกต้อง' })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: err.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
                                     navigator.clipboard.writeText(codeText);
                                     setCopyScriptSuccess(true);
                                     setTimeout(() => setCopyScriptSuccess(false), 3000);

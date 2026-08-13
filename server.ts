@@ -93,22 +93,22 @@ async function startServer() {
   // API Route: Save data to Google Sheets via Google Apps Script Web App
   app.post("/api/appscript-save", async (req, res) => {
     try {
-      const { appScriptUrl, students, action } = req.body;
+      const { appScriptUrl, ...payloadData } = req.body;
       
       if (!appScriptUrl || typeof appScriptUrl !== 'string') {
         res.status(400).json({ error: 'กรุณาระบุ Web App URL ของ Google Apps Script' });
         return;
       }
 
-      console.log(`[Server] Posting data to Google Apps Script Web App: ${appScriptUrl}`);
+      console.log(`[Server] Posting data to Google Apps Script Web App: ${appScriptUrl.trim()}`);
       
       const payload = {
-        action: action || 'sync_all',
-        students: students || [],
+        action: payloadData.action || 'sync_all',
+        ...payloadData,
         timestamp: new Date().toISOString()
       };
 
-      const response = await fetch(appScriptUrl, {
+      const response = await fetch(appScriptUrl.trim(), {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain;charset=utf-8'
