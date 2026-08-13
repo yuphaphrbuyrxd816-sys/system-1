@@ -1,0 +1,6 @@
+{
+  "name": "VisitSync",
+  "description": "ระบบบันทึกและติดตามการเยี่ยมบ้านนักเรียนสไตล์ Glide App แยกบัญชีครูและนักเรียน พร้อมซิงค์ Google Sheets",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
